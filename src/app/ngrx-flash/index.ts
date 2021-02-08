@@ -1,118 +1,116 @@
-import { select } from '@ngrx/store';
-import { Actions, createEffect, ofType } from '@ngrx/effects';
-import { of, OperatorFunction, pipe, throwError } from 'rxjs';
-import { catchError, switchMap, tap } from 'rxjs/operators';
+import {
+  Action,
+  ActionOptions,
+  Store,
+  ofAction,
+  ofActionDispatched,
+  ofActionCanceled,
+  ofActionCompleted,
+  ofActionErrored,
+  ofActionSuccessful,
+  ActionType
+} from '@ngxs/store';
+import { pluck } from 'rxjs/operators';
 
-export interface INgRxFlashAction {
-    type: string | number | symbol;
-    payload: any;
+const ACTION_EFFECT_SYMBOL = Symbol('__ngxs-fin-effects__');
+
+export type TEffectType = 'ofAction'
+  | 'ofActionDispatched'
+  | 'ofActionSuccessful'
+  | 'ofActionCanceled'
+  | 'ofActionErrored'
+  | 'ofActionCompleted';
+
+function resolveHandler(type: TEffectType, actionName: string) {
+  const action = { type: actionName } as ActionType;
+  switch (type) {
+    case 'ofAction': return ofAction(action);
+    case 'ofActionDispatched': return ofActionDispatched(action);
+    case 'ofActionSuccessful': return ofActionSuccessful(action);
+    case 'ofActionCanceled': return ofActionCanceled(action);
+    case 'ofActionErrored': return ofActionErrored(action);
+    case 'ofActionCompleted': return ofActionCompleted(action);
+  }
 }
 
-export function createReducer(reducers, initialState) {
-    return function reducer(state = initialState, action) {
-        if (action.type in reducers) {
-            return reducers[action.type](state, action.payload);
-        } else {
-            return state;
-        }
-    };
+export function FinAction(options?: ActionOptions): MethodDecorator {
+  // tslint:disable-next-line:only-arrow-functions
+  return function(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    const decorateFn = Action([propertyKey].map(type => ({ type })), options);
+    decorateFn(target, propertyKey, descriptor);
+  };
 }
 
-export const createDispatcher = <T>(store): T => {
-    return new Proxy(
-        {},
-        {
-            get: (obj, prop) => {
-                if (prop === 'hasOwnProperty') {
-                    return obj[prop];
-                }
-
-                const dispatch = payload => {
-                    store.dispatch({ type: prop, payload } as INgRxFlashAction);
-                };
-                Object.defineProperty(dispatch, 'name', {
-                    value: prop
-                });
-                return dispatch;
-            }
-        }
-    ) as T;
-};
-
-export const createActions = <T>(): T => {
-    return new Proxy(
-        {},
-        {
-            get: (obj, prop) => {
-                if (prop === 'hasOwnProperty') {
-                    return obj[prop];
-                }
-
-                const action = (payload): INgRxFlashAction => {
-                    return { type: prop, payload };
-                };
-                Object.defineProperty(action, 'name', {
-                    value: prop
-                });
-                return action;
-            }
-        }
-    ) as T;
-};
-
-export const createSelectors = <T>(store, selectors): T => {
-    const accessors = {};
-    for (const selectorName in selectors) {
-        if (!selectors.hasOwnProperty(selectorName)) {
-            continue;
-        }
-
-        accessors[selectorName] = props => store.pipe(select(selectors[selectorName], props));
-    }
-    return accessors as T;
-};
-
-const ACTION_EFFECT = Symbol('@ngrx/flash/action-effect');
-
-export function ActionEffect(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    if (target[propertyKey] instanceof Function) {
-        descriptor.enumerable = true;
-        target[propertyKey][ACTION_EFFECT] = true;
-    }
+function createAction<T>(actionName, payload: T) {
+  return { payload, type: actionName };
 }
 
-export const createEffects = (service: any, actions$: Actions): void => {
-    const effectMethods: string[] = [];
-    for (const propertyName in service) {
-        if (service[propertyName][ACTION_EFFECT] === true) {
-            effectMethods.push(propertyName);
-        }
+export function createDispatcher<T, K = any>(store: Store): T {
+  return new Proxy({}, {
+    get(target, actionName: string) {
+      if (actionName === 'hasOwnProperty') {
+        return target[actionName];
+      }
+      return payload => {
+        store.dispatch(createAction<K>(actionName, payload));
+      };
     }
+  }) as T;
+}
 
-    effectMethods.forEach(method => {
-        service[`_${method}$`] = createEffect(() => service[method](actions$.pipe(ofType(method))));
-    });
-};
+export function FinEffect(hook: TEffectType): MethodDecorator {
+  // tslint:disable-next-line:only-arrow-functions
+  return function(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    if (typeof target[propertyKey] === 'function') {
+      const originalPipe = target[propertyKey];
+      if (!target[ACTION_EFFECT_SYMBOL]) {
+        target[ACTION_EFFECT_SYMBOL] = {};
+      }
+      function effectRunner() {
+        if (!this.actions$) {
+          throw new Error(`Actions must be provided from the @ngxs/store.
 
-export const NGRX_FLASH_EMPTY_ACTION = { type: '@ngrx/flash/EMPTY' };
-
-export const EXIT_EFFECT = of(null).pipe(
-    tap(() => console.warn('Make sure you\'re using "EXIT_EFFECT" in conjunction with "endEffect" operator')),
-    switchMap(() => throwError(NGRX_FLASH_EMPTY_ACTION)));
-
-export const endEffect = (finalizeFn = () => {}): OperatorFunction<any, any> => pipe(
-    tap(() => {
-        finalizeFn();
-    }),
-    catchError((error, source) => {
-        finalizeFn();
-
-        // If it's a skip logic, return source to keep source stream opened
-        if (error === NGRX_FLASH_EMPTY_ACTION) {
-            return source;
-        } else {
-            // All other errors are rethrown and caught by client
-            return throwError(error);
+@Injectable()
+export class ${this.constructor.name} {
+  constructor(>>> private actions$: Actions <<<)
+  ...
+}
+          `);
         }
-    }),
-);
+        if (!effectRunner[propertyKey]) {
+          effectRunner[propertyKey] = null;
+        } else if (typeof effectRunner[propertyKey].unsubscribe === 'function') {
+          effectRunner[propertyKey].unsubscribe();
+          effectRunner[propertyKey] = null;
+        }
+        effectRunner[propertyKey] = this.actions$
+          .pipe(
+            resolveHandler(hook, propertyKey),
+            pluck('payload'),
+            originalPipe.call(this)
+          ).subscribe();
+      }
+      target[ACTION_EFFECT_SYMBOL][propertyKey] = effectRunner;
+    }
+  };
+}
+
+export function createEffects<T>(service: T) {
+  if (!service[ACTION_EFFECT_SYMBOL]) {
+    throw new Error(`No effects declared in ${service.constructor.name}`);
+  }
+  Object.values(service[ACTION_EFFECT_SYMBOL])
+    .forEach((func: any) => func.call(service));
+}
+//
+// export const createSelectors = <T>(store, selectors): T => {
+//     const accessors = {};
+//     for (const selectorName in selectors) {
+//         if (!selectors.hasOwnProperty(selectorName)) {
+//             continue;
+//         }
+//
+//         accessors[selectorName] = props => store.pipe(select(selectors[selectorName], props));
+//     }
+//     return accessors as T;
+// };
