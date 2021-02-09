@@ -1,0 +1,11 @@
+<a routerLink="/one">
+  <h1>One</h1>
+</a>
+<a routerLink="/two">
+  <h1>Two</h1>
+</a>
+
+<h1>Counter</h1>
+<h2>{{ count$ | async }}</h2>
+<button (click)="service.incrementTh({ count: 5 })">increment</button>
+<button (click)="service.decrementTh({ count: 41 })">decrement</button>

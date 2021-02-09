@@ -1,9 +1,12 @@
 <a routerLink="/two">
   <h1>Two</h1>
 </a>
+<a routerLink="/three">
+  <h1>Three</h1>
+</a>
 
 <h1>Counter</h1>
 <h2>{{ count$ | async }}</h2>
-<button (click)="service.dispatch.increment()">increment</button>
+<button (click)="service.dispatch.increment({ count: 4 })">increment</button>
 <button (click)="service.dispatch.decrement()">decrement</button>
 <button (click)="service.dispatch.reset()">reset</button>

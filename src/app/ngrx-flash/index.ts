@@ -10,9 +10,13 @@ import {
   ofActionSuccessful,
   ActionType
 } from '@ngxs/store';
-import { pluck } from 'rxjs/operators';
+import { pluck, take } from 'rxjs/operators';
+import { Observable } from 'rxjs';
+
+const compact = (array: any[]) => array.filter(Boolean);
 
 const ACTION_EFFECT_SYMBOL = Symbol('__ngxs-fin-effects__');
+const ACTION_MAP_SYMBOL = Symbol('__ngxs-fin-actions__');
 
 export type TEffectType = 'ofAction'
   | 'ofActionDispatched'
@@ -33,7 +37,7 @@ function resolveHandler(type: TEffectType, actionName: string) {
   }
 }
 
-export function FinAction(options?: ActionOptions): MethodDecorator {
+export function FinStoreAction(options?: ActionOptions): MethodDecorator {
   // tslint:disable-next-line:only-arrow-functions
   return function(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
     const decorateFn = Action([propertyKey].map(type => ({ type })), options);
@@ -42,7 +46,21 @@ export function FinAction(options?: ActionOptions): MethodDecorator {
 }
 
 function createAction<T>(actionName, payload: T) {
-  return { payload, type: actionName };
+  if (!createAction[ACTION_MAP_SYMBOL]) {
+    createAction[ACTION_MAP_SYMBOL] = {};
+  }
+  if (!createAction[ACTION_MAP_SYMBOL][actionName]) {
+    createAction[ACTION_MAP_SYMBOL][actionName] = class {
+      static readonly type = actionName;
+      constructor(actionPayload = {}) {
+        Object.keys(actionPayload).forEach(key => {
+          this[key] = actionPayload[key];
+        });
+      }
+    };
+  }
+
+  return new createAction[ACTION_MAP_SYMBOL][actionName](payload);
 }
 
 export function createDispatcher<T, K = any>(store: Store): T {
@@ -51,9 +69,7 @@ export function createDispatcher<T, K = any>(store: Store): T {
       if (actionName === 'hasOwnProperty') {
         return target[actionName];
       }
-      return payload => {
-        store.dispatch(createAction<K>(actionName, payload));
-      };
+      return payload => store.dispatch(createAction<K>(actionName, payload));
     }
   }) as T;
 }
@@ -102,15 +118,84 @@ export function createEffects<T>(service: T) {
   Object.values(service[ACTION_EFFECT_SYMBOL])
     .forEach((func: any) => func.call(service));
 }
-//
-// export const createSelectors = <T>(store, selectors): T => {
-//     const accessors = {};
-//     for (const selectorName in selectors) {
-//         if (!selectors.hasOwnProperty(selectorName)) {
-//             continue;
-//         }
-//
-//         accessors[selectorName] = props => store.pipe(select(selectors[selectorName], props));
-//     }
-//     return accessors as T;
-// };
+
+export function FinServiceAction(): MethodDecorator {
+  // tslint:disable-next-line:only-arrow-functions
+  return function(target: any, prop, descriptor) {
+    if (typeof target[prop] !== 'function') {
+      return;
+    }
+
+    const originalFn = descriptor.value;
+
+    const [_, body] = target[prop].toString().match(/\{([\s\S]*)\}$/m);
+    const isBodyEmpty = body.replace(/^\s*\/\/.*$/mg, '').trim().length === 0;
+    if (isBodyEmpty) {
+      // @ts-ignore
+      descriptor.value = function(payload) {
+        return this.dispatch[prop](payload).pipe(take(1)).subscribe();
+      };
+    } else {
+      // @ts-ignore
+      // tslint:disable-next-line:only-arrow-functions
+      descriptor.value = function(payload) {
+        // @ts-ignore
+        return originalFn.call(this, payload).subscribe();
+      };
+    }
+    return descriptor;
+  };
+}
+
+export function FinActionEffect(actionName: string, hook: TEffectType): MethodDecorator {
+  // tslint:disable-next-line:only-arrow-functions
+  return function(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    if (typeof target[propertyKey] === 'function') {
+      const originalPipe = target[propertyKey];
+      if (!target[ACTION_EFFECT_SYMBOL]) {
+        target[ACTION_EFFECT_SYMBOL] = {};
+      }
+
+      function effectRunner() {
+        if (!this.actions$) {
+          throw new Error(`Actions must be provided from the @ngxs/store.
+
+@Injectable()
+export class ${this.constructor.name} {
+  constructor(>>> private actions$: Actions <<<)
+  ...
+}
+          `);
+        }
+        if (!effectRunner[actionName]) {
+          effectRunner[actionName] = null;
+        } else if (typeof effectRunner[actionName].unsubscribe === 'function') {
+          effectRunner[actionName].unsubscribe();
+          effectRunner[actionName] = null;
+        }
+        effectRunner[actionName] = this.actions$
+          .pipe(
+            resolveHandler(hook, actionName),
+            originalPipe.call(this)
+          ).subscribe();
+      }
+      target[ACTION_EFFECT_SYMBOL][propertyKey] = effectRunner;
+    }
+  };
+}
+
+export function FinStateService<K, TActions = any>(): ClassDecorator {
+  // @ts-ignore
+  // tslint:disable-next-line:only-arrow-functions
+  return function(constructor) {
+    // @ts-ignore
+    return class extends constructor {
+      private dispatch: TActions;
+      private store: Store;
+      constructor() {
+        super();
+        this.dispatch = createDispatcher(this.store);
+      }
+    };
+  };
+}

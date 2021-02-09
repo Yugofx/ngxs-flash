@@ -3,23 +3,23 @@ import { Injectable } from '@angular/core';
 import { FinStoreAction } from '../ngrx-flash';
 
 @State<{ count: number }>({
-  name: 'counter',
+  name: 'counterThrd',
   defaults: { count: 0 }
 })
 @Injectable()
-export class CounterState {
+export class CounterThState {
   @FinStoreAction()
-  increment(ctx: StateContext<{ count: number }>, { count }) {
+  incrementTh(ctx: StateContext<{ count: number }>, { count }) {
     ctx.patchState({ count: ctx.getState().count + count });
   }
 
   @FinStoreAction()
-  decrement(ctx: StateContext<{ count: number }>) {
-    ctx.patchState({ count: ctx.getState().count - 1 });
+  decrementTh(ctx: StateContext<{ count: number }>, { count }) {
+    ctx.patchState({ count: ctx.getState().count - count });
   }
 
   @FinStoreAction()
-  reset(ctx: StateContext<{ count: number }>) {
+  resetTh(ctx: StateContext<{ count: number }>) {
     ctx.setState({ count: 0 });
   }
 }
